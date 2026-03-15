@@ -217,31 +217,37 @@ std::vector<std::shared_ptr<Tensor>> CausalSelfAttention::Forward(const std::vec
     k = k->Transpose(1, 2);
     v = v->Transpose(1, 2);
 
+    std::shared_ptr<Tensor> fin;
     // TODO(zbl): support flash attention later
-    // if (flash_) { ... }
+    if (config_.flash) { 
+        fin = nn::function::ScaledDotProductAttention(q, k, v);
+    } else {
+        // manual implementation of attention
+        // this materializes the large (T,T) matrix for all the queries and keys
 
-    // manual implementation of attention
-    // this materializes the large (T,T) matrix for all the queries and keys
+        // q: (B, H_local, T, D)
+        // k: (B, H_local, T, D) -> (B, H_local, D, T)
+        // q @ k.T: (B, H_local, T, T) -> mul 1.0 / sqrt(D) -> (B, H_local, T, T)
+        auto att = q->Matmul(k->Transpose(-2, -1)) * (1.0 / std::sqrt(static_cast<float>(D)));
+        if (mask) {
+            // mask: (1, 1, T, T)
+            att = att->MaskedFill(mask, std::numeric_limits<float>::lowest());
+        }
+        // (B, H_local, T, T)
+        att = nn::function::Softmax(att, -1);
+        // att: (B, H_local, T, T) @ v: (B, H_local, T, D) -> y: (B, H_local, T, D)
+        auto y = att->Matmul(v);
+        // (B, H_local, T, D) -> Transpose(1, 2) -> (B, T, H_local, D) -> (B, T, C_local)
+        y = y->Transpose(1, 2)->Contiguous()->View({B, T, C_local});
 
-    // q: (B, H_local, T, D)
-    // k: (B, H_local, T, D) -> (B, H_local, D, T)
-    // q @ k.T: (B, H_local, T, T) -> mul 1.0 / sqrt(D) -> (B, H_local, T, T)
-    auto att = q->Matmul(k->Transpose(-2, -1)) * (1.0 / std::sqrt(static_cast<float>(D)));
-    if (mask) {
-        // mask: (1, 1, T, T)
-        att = att->MaskedFill(mask, std::numeric_limits<float>::lowest());
+        fin = y;
     }
-    // (B, H_local, T, T)
-    att = nn::function::Softmax(att, -1);
-    // att: (B, H_local, T, T) @ v: (B, H_local, T, D) -> y: (B, H_local, T, D)
-    auto y = att->Matmul(v);
-    // (B, H_local, T, D) -> Transpose(1, 2) -> (B, T, H_local, D) -> (B, T, C_local)
-    y = y->Transpose(1, 2)->Contiguous()->View({B, T, C_local});
+    
     // output projection
     // (B, T, C_local) -> RowParallelLinear(C, C) -> (B, T, C)
-    y = (*modules_[kCProjLayerName])({y})[0];
+    fin = (*modules_[kCProjLayerName])({fin})[0];
     // (B, H, C) == (bs, seq_len, n_embd)
-    return {y};
+    return {fin};
 }
 
 MLP::MLP(const LLaMA3Config &config) : CloneableModule(kType) {

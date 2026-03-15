@@ -12,6 +12,7 @@
 #include "infini_train/include/autograd/transform.h"
 #include "infini_train/include/nn/init.h"
 #include "infini_train/include/tensor.h"
+#include "infini_train/include/autograd/scaled_dot_product_attention.h"
 
 namespace infini_train::nn::function {
 std::shared_ptr<Tensor> Tril(const std::shared_ptr<Tensor> &input, int64_t diagonal) {
@@ -79,4 +80,17 @@ std::shared_ptr<Tensor> Softmax(const std::shared_ptr<Tensor> &input, int64_t di
 std::shared_ptr<Tensor> Sigmoid(const std::shared_ptr<Tensor> &input) {
     return std::make_shared<autograd::Sigmoid>()->Apply({input})[0];
 }
+
+std::shared_ptr<Tensor> ScaledDotProductAttention(const std::shared_ptr<Tensor> &query, 
+                                                  const std::shared_ptr<Tensor> &key, 
+                                                  const std::shared_ptr<Tensor> &value, 
+                                                  const std::shared_ptr<Tensor> &attn_mask=nullptr, 
+                                                  int64_t dropout_p=0.0, 
+                                                  bool is_causal=false, 
+                                                  std::optional<double> scale = std::nullopt, 
+                                                  bool enable_gqa=false) {
+    return std::make_shared<autograd::ScaledDotProductAttention>(dropout_p, is_causal, scale, enable_gqa)
+        ->Apply({query, key, value, attn_mask})[0];
+}
+
 } // namespace infini_train::nn::function

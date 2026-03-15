@@ -105,24 +105,31 @@ CausalSelfAttention::Forward(const std::vector<std::shared_ptr<infini_train::Ten
     q = q->View({B, T, local_n_head_, head_dim})->Transpose(1, 2);
     v = v->View({B, T, local_n_head_, head_dim})->Transpose(1, 2);
 
-    // (B, h_l, T, T)
-    auto att = q->Matmul(k->Transpose(-2, -1)) * (1.0 / std::sqrt(head_dim));
-    // (1, 1, T, T)
-    auto mask = buffers_[kParamBiasName]->Slice({0, 0, 0, 0}, {1, 1, T, T}, {1, 1, 1, 1});
-    // (1, 1, T, T) -> eq 0 -> (1, 1, T, T) -> masked_fill -> (B, h_l, T, T)
-    att = att->MaskedFill(mask == 0, -std::numeric_limits<float>::infinity());
-    // (B, h_l, T, T)
-    att = nn::function::Softmax(att, -1);
-    // (B, h_l, T, Dh)
-    auto y = att->Matmul(v);
-    // (B, h_l, T, Dh) -> (B, T, h_l, Dh) -> (B, T, local_C)
-    y = y->Transpose(1, 2)->Contiguous()->View({B, T, local_C});
+    std::shared_ptr<Tensor> fin;
+    if (config_.use_flash) {
+        fin = nn::function::ScaledDotProductAttention(k, q, v);
+    } else {
+        // (B, h_l, T, T)
+        auto att = q->Matmul(k->Transpose(-2, -1)) * (1.0 / std::sqrt(head_dim));
+        // (1, 1, T, T)
+        auto mask = buffers_[kParamBiasName]->Slice({0, 0, 0, 0}, {1, 1, T, T}, {1, 1, 1, 1});
+        // (1, 1, T, T) -> eq 0 -> (1, 1, T, T) -> masked_fill -> (B, h_l, T, T)
+        att = att->MaskedFill(mask == 0, -std::numeric_limits<float>::infinity());
+        // (B, h_l, T, T)
+        att = nn::function::Softmax(att, -1);
+        // (B, h_l, T, Dh)
+        auto y = att->Matmul(v);
+        // (B, h_l, T, Dh) -> (B, T, h_l, Dh) -> (B, T, local_C)
+        y = y->Transpose(1, 2)->Contiguous()->View({B, T, local_C});
+
+        fin = y;
+    }
 
     // Get full tensor
     // (B, T, local_C) -> RowParallelLinear(n_embd, n_embd) -> (B, T, C)
-    y = (*modules_[kCProjLayerName])({y})[0];
+    fin = (*modules_[kCProjLayerName])({fin})[0];
     // (B, T, C) == (bs, seq_len, n_embd)
-    return {y};
+    return {fin};
 }
 
 MLP::MLP(const GPT2Config &config) : CloneableModule(kType) {

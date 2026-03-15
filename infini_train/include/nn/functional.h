@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace infini_train {
@@ -182,5 +183,41 @@ std::shared_ptr<Tensor> Stack(const std::vector<std::shared_ptr<Tensor>> &inputs
 // Returns:
 //   Concatenation of the input tensors.
 std::shared_ptr<Tensor> Concat(const std::vector<std::shared_ptr<Tensor>> &inputs, int64_t dim = 0);
+
+// Computes scaled dot-product attention: Softmax((Q K^T) * scale) V.
+//
+// Args:
+//   query: The query tensor. Typical shapes include
+//          (B, T_q, n_head, head_dim) or (B, n_head, T_q, head_dim).
+//   key:   The key tensor, shape compatible with `query` for dot-product (sequence length T_k).
+//   value: The value tensor, with shape matching `key` (values over T_k).
+//   attn_mask: Optional attention mask. Can be a boolean mask or an additive mask
+//              (e.g. -inf at masked positions). Must be broadcastable to the
+//              attention score shape (B, n_head, T_q, T_k) (or variants such as
+//              (T_q, T_k) or (B,1,T_q,T_k)). Used to mask padding or specific positions.
+//   dropout_p: Dropout probability applied to attention weights (0.0 - 1.0).
+//              Note: the signature uses `int64_t` but the semantic is a probability.
+//   is_causal: If true, apply causal (future) masking so queries cannot attend
+//              to future key positions (useful for autoregressive decoding).
+//   scale: Optional scaling factor applied to the raw dot-product scores.
+//          If not provided (`nullopt`), the implementation typically uses
+//          1.0 / sqrt(head_dim).
+//   enable_gqa: When true, enable Grouped Query Attention (GQA). In GQA the
+//               number of key/value heads may be less than the number of query
+//               heads (n_kv_head < n_head); keys/values are grouped or broadcast
+//               accordingly to reduce computation/memory.
+//
+// Returns:
+//   A tensor containing the attention output. Shape usually corresponds to
+//   `query` layout (e.g. (B, T_q, n_head, head_dim) or with heads merged to
+//   (B, T_q, n_head * head_dim)), depending on caller expectations.
+std::shared_ptr<Tensor> ScaledDotProductAttention(const std::shared_ptr<Tensor> &query, 
+                                                  const std::shared_ptr<Tensor> &key, 
+                                                  const std::shared_ptr<Tensor> &value, 
+                                                  const std::shared_ptr<Tensor> &attn_mask=nullptr, 
+                                                  int64_t dropout_p=0.0, 
+                                                  bool is_causal=false, 
+                                                  std::optional<double> scale = std::nullopt, 
+                                                  bool enable_gqa= false);
 
 } // namespace infini_train::nn::function
